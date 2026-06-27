@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>rblxchar revived</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+</head>
+<body>
+
+    <h1>rblxchar revived</h1>
+    <hr>
+
+    <label for="apiKeyInput">API Key:</label><br>
+    <input type="password" id="apiKeyInput" placeholder="API Key" style="width: 300px;" required>
+    <hr>
+
+    <h2>Avatar</h2>
+    <form id="avatarForm">
+        <label>
+            <input type="radio" name="searchType" value="username" checked> Username
+        </label>
+        <label>
+            <input type="radio" name="searchType" value="id"> User ID
+        </label>
+        <br><br>
+        <input type="text" id="avatarInput" placeholder="Username or User ID" required>
+        <button type="submit">Fetch</button>
+    </form>
+
+    <br>
+    <div id="avatarResult"></div>
+
+    <hr>
+
+    <h2>Asset</h2>
+    <form id="assetForm">
+        <input type="text" id="assetIdInput" placeholder="Asset ID" required>
+        <button type="submit">Fetch</button>
+    </form>
+
+    <br>
+    <div id="assetResult"></div>
+
+    <script>
+        const WORKER_URL = "https://rblxchar-revived.acc943132.workers.dev";
+
+        function getApiKey() {
+            return document.getElementById('apiKeyInput').value.trim();
+        }
+
+        async function getCdnBlob(hash) {
+            let i = 31;
+            for (let t = 0; t < hash.length; t++) {
+                i ^= hash.charCodeAt(t);
+            }
+            const primaryServer = i % 8;
+
+            for (let j = 0; j < 8; j++) {
+                const url = `https://t${(primaryServer + j) % 8}.rbxcdn.com/${hash}`;
+                try {
+                    const res = await fetch(url);
+                    if (res.ok) {
+                        return await res.blob();
+                    }
+                } catch (e) {
+                }
+            }
+            throw new Error(`Could not fetch file for hash: ${hash}`);
+        }
+
+        async function bundleAndDownload(sceneConfig, type) {
+            const zip = new JSZip();
+            
+            if (sceneConfig.obj) {
+                zip.file("model.obj", await getCdnBlob(sceneConfig.obj));
+            }
+            if (sceneConfig.mtl) {
+                zip.file("model.mtl", await getCdnBlob(sceneConfig.mtl));
+            }
+
+            if (sceneConfig.textures && Array.isArray(sceneConfig.textures)) {
+                for (let i = 0; i < sceneConfig.textures.length; i++) {
+                    zip.file(`texture_${i}.png`, await getCdnBlob(sceneConfig.textures[i]));
+                }
+            }
+
+            const content = await zip.generateAsync({ type: "blob" });
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(content);
+            a.download = `${type.toLowerCase()}_bundle.zip`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            
+            URL.revokeObjectURL(a.href);
+        }
+
+        document.getElementById('avatarForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const resultDiv = document.getElementById('avatarResult');
+            const apiKey = getApiKey();
+
+            if (!apiKey) {
+                resultDiv.innerHTML = "Error: Missing API Key";
+                return;
+            }
+
+            resultDiv.innerHTML = "Loading...";
+
+            const searchType = document.querySelector('input[name="searchType"]:checked').value;
+            const inputValue = document.getElementById('avatarInput').value.trim();
+            let userId = inputValue;
+
+            try {
+                if (searchType === 'username') {
+                    const userRes = await fetch(`${WORKER_URL}/api/get-user-id`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ username: inputValue })
+                    });
+                    const userData = await userRes.json();
+                    if (userData.error) throw new Error("User not found");
+                    userId = userData.id;
+                }
+
+                const avatarRes = await fetch(`${WORKER_URL}/api/avatar-3d/${userId}`, {
+                    method: 'GET',
+                    headers: { 'X-User-API-Key': apiKey }
+                });
+                const avatarData = await avatarRes.json();
+
+                if (avatarData.error) throw new Error(avatarData.error);
+
+                if (avatarData.imageUrl) {
+                    resultDiv.innerHTML = "Bundling files, please wait...";
+                    const configRes = await fetch(avatarData.imageUrl);
+                    const sceneConfig = await configRes.json();
+                    
+                    await bundleAndDownload(sceneConfig, "Avatar");
+                    
+                    resultDiv.innerHTML = "<strong>Download complete!</strong> Check your downloads folder.";
+                } else {
+                    resultDiv.innerHTML = "No 3D data found for this user.";
+                }
+
+            } catch (err) {
+                resultDiv.innerHTML = "Error: " + err.message;
+            }
+        });
+
+        document.getElementById('assetForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const resultDiv = document.getElementById('assetResult');
+            const apiKey = getApiKey();
+
+            if (!apiKey) {
+                resultDiv.innerHTML = "Error: Missing API Key";
+                return;
+            }
+
+            resultDiv.innerHTML = "Loading...";
+
+            const assetId = document.getElementById('assetIdInput').value.trim();
+
+            try {
+                const assetRes = await fetch(`${WORKER_URL}/api/asset-3d/${assetId}`, {
+                    method: 'GET',
+                    headers: { 'X-User-API-Key': apiKey }
+                });
+                const assetData = await assetRes.json();
+
+                if (assetData.error) throw new Error(assetData.error);
+
+                if (assetData.imageUrl) {
+                    resultDiv.innerHTML = "Bundling files, please wait...";
+                    const configRes = await fetch(assetData.imageUrl);
+                    const sceneConfig = await configRes.json();
+                    
+                    await bundleAndDownload(sceneConfig, "Asset");
+                    
+                    resultDiv.innerHTML = "<strong>Download complete!</strong> Check your downloads folder.";
+                } else {
+                    resultDiv.innerHTML = "No 3D data found for this asset.";
+                }
+            } catch (err) {
+                resultDiv.innerHTML = "Error: " + err.message;
+            }
+        });
+    </script>
+</body>
+</html>
